@@ -85,6 +85,13 @@ export default function CreateStreamPage() {
     }
   };
 
+  // Inline validation feedback for the amount field. validateAmountInput
+  // returns an error message when invalid and null when valid. Only show it
+  // once the user has typed something — the empty case is handled on submit.
+  const amountError = formData.amount
+    ? validateAmountInput(formData.amount, TOKEN_DECIMALS)
+    : null;
+
   return (
     <div className="container mx-auto max-w-2xl px-4 py-12">
       <Link
@@ -152,10 +159,8 @@ export default function CreateStreamPage() {
                 }}
                 required
               />
-              {formData.amount && !validateAmountInput(formData.amount, TOKEN_DECIMALS) && (
-                <p className="text-xs text-red-400 mt-1">
-                  Amount must be greater than 0 with max {TOKEN_DECIMALS} decimals
-                </p>
+              {amountError && (
+                <p className="text-xs text-red-400 mt-1">{amountError}</p>
               )}
             </div>
           </div>
