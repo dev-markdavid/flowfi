@@ -1,66 +1,236 @@
-name: Contracts CI
+# Continuous Integration workflow for FlowFi
+# Covers frontend linting/build, backend build/test, and Soroban contract build/test.
+name: CI
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 on:
   push:
     branches: [main, develop]
-    paths:
-      - "contracts/**"
-      - ".github/workflows/ci.yml"
   pull_request:
-    branches: [main]
-    paths:
-      - "contracts/**"
-      - ".github/workflows/ci.yml"
+    branches: [main, develop]
 
 jobs:
-  contracts:
-    name: Build, Fmt, Clippy & Test
+  frontend:
+    name: Frontend CI
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repository
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+        working-directory: frontend
+
+      - name: Install Rollup Native Binding
+        run: npm install @rollup/rollup-linux-x64-gnu --no-save
+        working-directory: frontend
+
+      - name: Run Frontend Tests
+        run: npm run test:coverage
+        working-directory: frontend
+
+      - name: Upload frontend coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: frontend/coverage/lcov.info
+          flags: frontend
+          name: frontend-coverage
+          fail_ci_if_error: false
+          verbose: true
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+      - name: Build
+        run: npm run build
+        working-directory: frontend
+
+  backend:
+    name: Backend CI
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: flowfi_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --include=optional
+
+      - name: Setup Database
+        run: |
+          npx prisma generate --schema=prisma/schema.prisma
+          npx prisma db push --accept-data-loss --schema=prisma/schema.prisma
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://postgres:password@127.0.0.1:5432/flowfi_test
+
+      - name: Build
+        run: npm run build
+        working-directory: backend
+
+      - name: Install Rollup Native Binding
+        run: npm install @rollup/rollup-linux-x64-gnu --no-save
+
+      - name: Run Backend Tests
+        run: |
+          ls -la src/generated/prisma
+          npm install @vitest/coverage-v8@2.1.9 --no-save
+          npx vitest run --coverage --reporter=basic
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://postgres:password@127.0.0.1:5432/flowfi_test
+          NODE_ENV: test
+
+      - name: Upload backend coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: backend/coverage/lcov.info
+          flags: backend
+          name: backend-coverage
+          fail_ci_if_error: false
+          verbose: true
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  contracts:
+    name: Soroban Contracts CI
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: stable
           targets: wasm32-unknown-unknown
           components: rustfmt, clippy
 
-      - name: Cache Cargo registry and build artifacts
-        uses: actions/cache@v4
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            contracts/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('contracts/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
+          workspace: "contracts -> target"
 
-      # ── Formatting gate ──────────────────────────────────────────────────────
-      - name: Check formatting (cargo fmt)
-        working-directory: contracts
+      - name: Check Formatting
         run: cargo fmt --all -- --check
-
-      # ── Lint gate ────────────────────────────────────────────────────────────
-      - name: Lint with Clippy
         working-directory: contracts
+
+      - name: Run Clippy
+        run: cargo clippy --all-targets -- -D warnings
+        working-directory: contracts
+
+      - name: Build Contracts
+        run: cargo build --target wasm32-unknown-unknown --release
+        working-directory: contracts
+
+      - name: Run Contract Tests
+        run: cargo test
+        working-directory: contracts
+
+      - name: Install cargo-tarpaulin
+        run: cargo install cargo-tarpaulin --locked
+
+      - name: Run Contract Coverage
+        run: cargo tarpaulin --workspace --out Xml --output-dir coverage --fail-under 70
+        working-directory: contracts
+
+      - name: Upload contract coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: contracts/coverage/cobertura.xml
+          flags: contracts
+          name: contracts-coverage
+          fail_ci_if_error: false
+          verbose: true
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+      - name: Install Stellar CLI
         run: |
-          cargo clippy \
-            --all-targets \
-            --target wasm32-unknown-unknown \
-            -- -D warnings
+          curl -fsSL https://github.com/stellar/stellar-cli/raw/main/install.sh | sh -s -- --install-deps
+          echo "$HOME/.stellar-cli/bin" >> $GITHUB_PATH
+        shell: bash
 
-      # ── WASM build ───────────────────────────────────────────────────────────
-      - name: Build contracts (WASM release)
-        working-directory: contracts
+      - name: Optimize WASM files
         run: |
-          cargo build \
-            --release \
-            --target wasm32-unknown-unknown
+          set -euo pipefail
 
-      # ── Unit tests ───────────────────────────────────────────────────────────
-      - name: Run contract unit tests
-        working-directory: contracts
-        run: cargo test --all
+          # Target the precise release build directory
+          RELEASE_DIR="contracts/target/wasm32-unknown-unknown/release"
+
+          # Use your strict selection logic to target un-optimized raw binaries only
+          WASMS=$(find "$RELEASE_DIR" -maxdepth 1 -type f -name "*.wasm" ! -name "*.optimized.wasm")
+
+          if [ -z "$WASMS" ]; then
+            echo "Error: No raw WASM files found in $RELEASE_DIR"
+            exit 1
+          fi
+
+          for w in $WASMS; do
+            filename=$(basename "$w")
+            out="$RELEASE_DIR/${filename%.wasm}.optimized.wasm"
+            echo "Optimizing $filename -> $(basename "$out")"
+            stellar contract optimize --wasm "$w" --wasm-out "$out"
+          done
+        shell: bash
+
+      - name: Check WASM size budget
+        run: |
+          set -euo pipefail
+
+          RELEASE_DIR="contracts/target/wasm32-unknown-unknown/release"
+          WASM_SIZE_LIMIT=200000  # 200KB budget for optimized WASM
+
+          for wasm in "$RELEASE_DIR"/*.optimized.wasm; do
+            if [ -f "$wasm" ]; then
+              size=$(stat -c%s "$wasm")
+              filename=$(basename "$wasm")
+              echo "Optimized WASM size: $filename = $size bytes"
+
+              if [ "$size" -gt "$WASM_SIZE_LIMIT" ]; then
+                echo "Error: $filename exceeds size budget of $WASM_SIZE_LIMIT bytes"
+                exit 1
+              fi
+            fi
+          done
+        shell: bash
+
+      - name: Upload optimized WASM artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: optimized-wasm
+          path: contracts/target/wasm32-unknown-unknown/release/*.optimized.wasm
+          if-no-files-found: error

@@ -1,5 +1,7 @@
 import { Router } from 'express';
-import { registerUser, getUser } from '../../controllers/user.controller.js';
+import { registerUser, getUser, getUserEvents, getCurrentUser } from '../../controllers/user.controller.js';
+import { getUserStreamSummary } from '../../controllers/stream.controller.js';
+import { requireAuth } from '../../middleware/auth.js';
 
 const router = Router();
 
@@ -62,8 +64,124 @@ const router = Router();
  *               $ref: '#/components/schemas/User'
  *       404:
  *         description: User not found
+ *
+ * /v1/users/me:
+ *   get:
+ *     tags:
+ *       - Users
+ *     summary: Get current authenticated user
+ *     description: Returns the currently authenticated user's details (protected endpoint)
+ *     security:
+ *       - BearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Current user details
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/User'
+ *       401:
+ *         description: Unauthorized - invalid or missing token
  */
 router.post('/', registerUser);
+router.get('/me', requireAuth, getCurrentUser);
+/**
+ * @openapi
+ * /v1/users/{address}/summary:
+ *   get:
+ *     tags:
+ *       - Users
+ *     summary: Get aggregate stream summary for a user
+ *     description: |
+ *       Returns dashboard/profile summary data for a wallet address:
+ *       total created streams, total streamed out/in, current claimable across
+ *       active incoming streams, and active stream counts.
+ *
+ *       Response is cached for 30 seconds to reduce DB load.
+ *     parameters:
+ *       - in: path
+ *         name: address
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Stellar public key address
+ *     responses:
+ *       200:
+ *         description: User stream summary
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 address:
+ *                   type: string
+ *                 totalStreamsCreated:
+ *                   type: integer
+ *                 totalStreamedOut:
+ *                   type: string
+ *                 totalStreamedIn:
+ *                   type: string
+ *                 currentClaimable:
+ *                   type: string
+ *                 activeOutgoingCount:
+ *                   type: integer
+ *                 activeIncomingCount:
+ *                   type: integer
+ */
+router.get('/:address/summary', getUserStreamSummary);
 router.get('/:publicKey', getUser);
+
+/**
+ * @openapi
+ * /v1/users/{publicKey}/events:
+ *   get:
+ *     tags:
+ *       - Users
+ *     summary: Fetch user activity history
+ *     description: Returns a paginated chronological history of all stream events associated with the user.
+ *     parameters:
+ *       - in: path
+ *         name: publicKey
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Stellar public key
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 50
+ *           maximum: 200
+ *         description: Maximum number of events to return
+ *       - in: query
+ *         name: offset
+ *         schema:
+ *           type: integer
+ *           default: 0
+ *         description: Number of events to skip for pagination
+ *     responses:
+ *       200:
+ *         description: Paginated list of user events
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     $ref: '#/components/schemas/StreamEvent'
+ *                 total:
+ *                   type: integer
+ *                 hasMore:
+ *                   type: boolean
+ *                 limit:
+ *                   type: integer
+ *                 offset:
+ *                   type: integer
+ *       404:
+ *         description: User not found
+ */
+router.get('/:publicKey/events', getUserEvents);
 
 export default router;

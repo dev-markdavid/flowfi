@@ -1,6 +1,14 @@
-
-
 use soroban_sdk::{contracttype, Address};
+
+/// Status of a payment stream.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum StreamStatus {
+    Active,
+    Paused,
+    Cancelled,
+    Completed,
+}
 
 /// Centralized storage key strategy.
 ///
@@ -46,8 +54,10 @@ pub struct Stream {
     pub is_active: bool,
     /// `true` while the stream is paused; accrual is frozen at `paused_at`.
     pub paused: bool,
-    /// Ledger timestamp at which the stream was paused (0 when not paused).
-    pub paused_at: u64,
+    /// Ledger timestamp when the stream was paused, `None` if not paused.
+    pub paused_at: Option<u64>,
+    /// Current status of the stream.
+    pub status: StreamStatus,
 }
 
 /// Protocol-wide fee configuration.

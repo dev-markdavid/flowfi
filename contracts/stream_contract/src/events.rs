@@ -70,6 +70,30 @@ pub struct FeeCollectedEvent {
     pub token: Address,
 }
 
+/// Emitted once during one-time protocol initialization.
+///
+/// Topic: `("initialized",)`
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InitializedEvent {
+    pub admin: Address,
+    pub treasury: Address,
+    pub fee_rate_bps: u32,
+}
+
+/// Emitted when the fee configuration (treasury address or fee rate) is updated.
+///
+/// Topic: `("fee_config_updated",)`
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeConfigUpdatedEvent {
+    pub admin: Address,
+    pub old_treasury: Address,
+    pub new_treasury: Address,
+    pub old_fee_rate_bps: u32,
+    pub new_fee_rate_bps: u32,
+}
+
 /// Emitted when the protocol admin is transferred to a new address.
 ///
 /// Topic: `("admin_transferred",)`
@@ -82,7 +106,7 @@ pub struct AdminTransferredEvent {
     pub new_admin: Address,
 }
 
-/// Emitted when a stream is paused.
+/// Emitted when a sender pauses an active stream.
 ///
 /// Topic: `("stream_paused", stream_id)`
 #[contracttype]
@@ -94,7 +118,7 @@ pub struct StreamPausedEvent {
     pub paused_at: u64,
 }
 
-/// Emitted when a stream is resumed after being paused.
+/// Emitted when a sender resumes a paused stream.
 ///
 /// Topic: `("stream_resumed", stream_id)`
 #[contracttype]
@@ -102,6 +126,17 @@ pub struct StreamPausedEvent {
 pub struct StreamResumedEvent {
     pub stream_id: u64,
     pub sender: Address,
-    /// Ledger timestamp at which streaming resumed.
-    pub resumed_at: u64,
+    /// Recomputed ledger timestamp at which the stream will fully drain.
+    pub new_end_time: u64,
+}
+
+/// Emitted when a stream is fully drained on the final withdrawal.
+///
+/// Topic: `("stream_completed", stream_id)`
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StreamCompletedEvent {
+    pub stream_id: u64,
+    pub recipient: Address,
+    pub total_withdrawn: i128,
 }
